@@ -2,6 +2,7 @@ use dmx_shared::DmxMessage;
 use rust_dmx::{available_ports, DmxPort};
 use std::{
     net::{TcpListener, TcpStream},
+    process,
     sync::{
         atomic::{AtomicU64, Ordering},
         Arc, Mutex,
@@ -124,16 +125,66 @@ struct DmxHandle {
 unsafe impl Send for DmxHandle {}
 
 fn main() {
+    let mut args = pico_args::Arguments::from_env();
+
+    if args.contains("--help") || args.contains("-h") {
+        println!("Usage: dmx-server [OPTIONS]");
+        println!();
+        println!("Options:");
+        println!("  --port <NAME|INDEX>  DMX port to use (name e.g. COM4, or index e.g. 1)");
+        println!("                       Defaults to the first available port (index 0)");
+        println!("  -h, --help           Show this help message");
+        process::exit(0);
+    }
+
+    let port_arg: Option<String> = args.opt_value_from_str("--port").unwrap_or(None);
+
     let listener = TcpListener::bind("0.0.0.0:33333").unwrap();
     println!("Server listening on port 33333");
 
-    let ports = available_ports().unwrap();
+    let mut ports = match available_ports() {
+        Ok(ports) if ports.is_empty() => {
+            eprintln!("Error: No DMX ports found. Is a DMX adapter connected?");
+            process::exit(1);
+        }
+        Ok(ports) => ports,
+        Err(err) => {
+            eprintln!("Error: Failed to enumerate DMX ports: {err}");
+            process::exit(1);
+        }
+    };
     println!("Available DMX ports: {}", ports.len());
+    for (i, port) in ports.iter().enumerate() {
+        println!("  [{i}] {}", port.name());
+    }
+
+    let port_index = match &port_arg {
+        None => 0,
+        Some(arg) => {
+            if let Ok(index) = arg.parse::<usize>() {
+                if index >= ports.len() {
+                    eprintln!(
+                        "Error: Port index {index} out of range (available: 0..{})",
+                        ports.len() - 1
+                    );
+                    process::exit(1);
+                }
+                index
+            } else {
+                match ports.iter().position(|p| p.name() == arg) {
+                    Some(index) => index,
+                    None => {
+                        eprintln!("Error: No DMX port found with name '{arg}'");
+                        process::exit(1);
+                    }
+                }
+            }
+        }
+    };
 
     let port = Arc::new(Mutex::new({
-        let mut ports = available_ports().unwrap();
-        let mut port = ports.remove(1);
-        println!("Opening DMX port [1]...");
+        let mut port = ports.remove(port_index);
+        println!("Opening DMX port [{port_index}]...");
         port.open().unwrap();
         println!("DMX port opened successfully");
         DmxHandle { port }

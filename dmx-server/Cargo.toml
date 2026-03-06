@@ -5,6 +5,7 @@ edition = "2021"
 
 [dependencies]
 dmx-shared = { path = "../dmx-shared" }
+pico-args = "0.5"
 rust_dmx = { git = "https://github.com/JoNil/rust-dmx.git" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
