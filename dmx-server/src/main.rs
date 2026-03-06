@@ -4,7 +4,7 @@ use std::{
     net::{TcpListener, TcpStream},
     process,
     sync::{
-        atomic::{AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
         Arc, Mutex,
     },
     thread,
@@ -15,6 +15,7 @@ fn handle_client_websocket(
     stream: TcpStream,
     handle: Arc<Mutex<DmxHandle>>,
     connection_id: u64,
+    client_connected: Arc<AtomicBool>,
 ) {
     let peer_addr = stream.peer_addr().unwrap();
 
@@ -26,6 +27,7 @@ fn handle_client_websocket(
         }
         Err(err) => {
             eprintln!("[conn {connection_id}] WebSocket handshake failed with {peer_addr}: {err}");
+            client_connected.store(false, Ordering::Release);
             return;
         }
     };
@@ -70,6 +72,7 @@ fn handle_client_websocket(
             }
             Ok(tungstenite::Message::Close(_)) => {
                 println!("[conn {connection_id}] Client {peer_addr} closed connection (received {msg_count} messages total)");
+                client_connected.store(false, Ordering::Release);
                 return;
             }
             Ok(_) => (),
@@ -77,6 +80,7 @@ fn handle_client_websocket(
                 println!(
                     "[conn {connection_id}] Connection with {peer_addr} terminated: {err} (received {msg_count} messages total)"
                 );
+                client_connected.store(false, Ordering::Release);
                 return;
             }
         }
@@ -156,17 +160,27 @@ fn main() {
     }));
 
     let next_conn_id = Arc::new(AtomicU64::new(0));
+    let client_connected = Arc::new(AtomicBool::new(false));
 
     for stream in listener.incoming() {
         let port = port.clone();
         match stream {
             Ok(stream) => {
                 let conn_id = next_conn_id.fetch_add(1, Ordering::Relaxed);
-                println!(
-                    "[conn {conn_id}] New TCP connection from {}",
-                    stream.peer_addr().unwrap()
-                );
-                thread::spawn(move || handle_client_websocket(stream, port, conn_id));
+                let peer_addr = stream.peer_addr().unwrap();
+
+                if client_connected
+                    .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+                    .is_err()
+                {
+                    println!("[conn {conn_id}] Rejected {peer_addr}: another client is already connected");
+                    drop(stream);
+                    continue;
+                }
+
+                println!("[conn {conn_id}] New TCP connection from {peer_addr}");
+                let connected = client_connected.clone();
+                thread::spawn(move || handle_client_websocket(stream, port, conn_id, connected));
             }
             Err(e) => {
                 eprintln!("Failed to accept connection: {e}");
