@@ -11,18 +11,6 @@ use std::{
     time::Instant,
 };
 
-// fn dmx(msg: &DmxMessage) -> [u8; 60] {
-//     let mut output = [0; 60];
-
-//     for i in 0..msg.channels.len() {
-//         let color = msg.channels[i];
-
-//         output[(12 * i)..(12 * (i + 1))].copy_from_slice(&color.dmx());
-//     }
-
-//     output
-// }
-
 fn handle_client_websocket(
     stream: TcpStream,
     handle: Arc<Mutex<DmxHandle>>,
@@ -54,7 +42,8 @@ fn handle_client_websocket(
                     Ok(msg) => {
                         msg_count += 1;
                         let mut handle = handle.lock().unwrap();
-                        if let Err(err) = handle.port.write(&msg.buffer[..128]) {
+                        let len = msg.buffer.len().min(128);
+                        if let Err(err) = handle.port.write(&msg.buffer[..len]) {
                             write_errors += 1;
                             eprintln!(
                                 "[conn {connection_id}] DMX write error (total: {write_errors}): {err}"
@@ -93,30 +82,6 @@ fn handle_client_websocket(
         }
     }
 }
-
-// fn handle_client(mut stream: TcpStream, handle: Arc<Mutex<DmxHandle>>) {
-//     let mut data = [0_u8; 6 * 5];
-
-//     while match stream.read_exact(&mut data) {
-//         Ok(()) => {
-//             let msg = DmxMessage::read_from(data.as_slice()).unwrap();
-//             {
-//                 let mut handle = handle.lock().unwrap();
-//                 handle.port.write(&dmx(&msg)).unwrap();
-//             }
-
-//             true
-//         }
-//         Err(_) => {
-//             println!(
-//                 "An error occurred, terminating connection with {}",
-//                 stream.peer_addr().unwrap()
-//             );
-//             stream.shutdown(Shutdown::Both).unwrap();
-//             false
-//         }
-//     } {}
-// }
 
 struct DmxHandle {
     port: Box<dyn DmxPort>,
